@@ -31,6 +31,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 int sock = 0;
+string host = "127.0.0.1";
 #define PORT 6699
 #endif
 
@@ -88,14 +89,14 @@ int ComRobot::Open(string usart) {
     }
     struct timeval tv;
     tv.tv_sec = 0;
-    tv.tv_usec = 80000;
+    tv.tv_usec = 200000;
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*) &tv, sizeof tv);
 
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_port = htons(PORT);
 
     // Convert IPv4 and IPv6 addresses from text to binary form 
-    if (inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr) <= 0) {
+    if (inet_pton(AF_INET, host.c_str(), &serv_addr.sin_addr) <= 0) {
         printf("\nInvalid address/ Address not supported \n");
         return -1;
     }
@@ -126,12 +127,46 @@ int ComRobot::Open(string usart) {
 #endif
 }
 
+int ComRobot::Open(string shost, int nport) {
+#ifdef __SIMULATION__
+
+    struct sockaddr_in serv_addr;
+    if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+        printf("\n Socket creation error \n");
+        return -1;
+    }
+    struct timeval tv;
+    tv.tv_sec = 0;
+    tv.tv_usec = 200000;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*) &tv, sizeof tv);
+
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_port = htons(nport);
+
+    if (inet_pton(AF_INET, shost.c_str(), &serv_addr.sin_addr) <= 0) {
+        cout << "Invalid address/ Address not supported" << endl;
+        return -1;
+    }
+
+    if (connect(sock, (struct sockaddr *) &serv_addr, sizeof (serv_addr)) < 0) {
+        return -2;
+    }
+    return 1;
+#else
+    return -1
+#endif
+}
+
 /**
  * Close serial link
  * @return Success if above 0, failure if below 0
  */
 int ComRobot::Close() {
+#ifdef __SIMULATION__
+    return close(sock);
+#elif
     return close(fd);
+#endif
 }
 
 /**
@@ -152,20 +187,26 @@ Message *ComRobot::Write(Message* msg) {
 
         s = MessageToString(msg);
 #ifdef __SIMULATION__
+        s += "\r";
 
         char buffer[1024] = {0};
         cout << "[" << __PRETTY_FUNCTION__ << "] Send command: " << s << endl << flush;
-        send(sock, s.c_str(), s.length(), 0);
+        send(sock, s.c_str(), s.length(), MSG_NOSIGNAL);
 
         int valread = read(sock, buffer, 1024);
-        if (valread < 0) {
+
+        if (valread == 0) {
+            cout << "The communication is out of order" << endl;
+            msgAnswer = new Message(MESSAGE_ANSWER_COM_ERROR);
+        } else if (valread < 0) {
+            cout << "Timeout" << endl;
             msgAnswer = new Message(MESSAGE_ANSWER_ROBOT_TIMEOUT);
         } else {
             string s(&buffer[0], valread);
             msgAnswer = StringToMessage(s);
-            //msgAnswer = new Message(MESSAGE_ANSWER_ACK);
+            cout << "Response: " << buffer << ", id: " << msgAnswer->GetID() << endl;
         }
-        cout << "response: " <<  buffer << ", id: " << msgAnswer->GetID() << endl;
+
 #else       
         AddChecksum(s);
 
